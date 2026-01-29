@@ -1,0 +1,11 @@
+gradio
+torch
+transformers
+diffusers
+accelerate
+sentencepiece
+soundfile
+scipy
+requests
+Pillow
+google-generativeai
