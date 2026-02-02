@@ -2,11 +2,13 @@ import os
 import torch
 import requests
 from transformers import pipeline, MarianMTModel, MarianTokenizer
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionXLPipeline
 import google.generativeai as genai
 
 # =========================
 # CONFIG
+# =========================
+
 # =========================
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Add in HuggingFace Secrets
 GROQ_MODEL = "gpt-4o-mini"
@@ -89,75 +91,59 @@ def translate(text, lang):
 # =========================
 # IMAGE GENERATION
 # =========================
-
-# ─── Global setup ─────────────────────────────────────────────────────────────
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
-
-image_pipe = None
-error_message = ""
-
-try:
-    print("Loading Stable Diffusion 1.5...")
-
-    image_pipe = StableDiffusionPipeline.from_pretrained(
-        "runwayml/stable-diffusion-v1-5",
-        dtype=DTYPE,
-        variant="fp16",                      # smaller download & faster load
-        safety_checker=None,                 # most common choice → disables NSFW filter
-        requires_safety_checker=False,       # removes annoying warning
-    )
-
-    # Critical memory optimizations (prevents 90% of OOM crashes on 16–24 GB GPUs)
-    image_pipe.enable_attention_slicing()    # #1 most important fix
-    image_pipe.enable_vae_slicing()          # helps with larger images / batches
-
-    # Optional: stronger memory saving (slower but very safe on <12 GB VRAM)
-    # image_pipe.enable_model_cpu_offload()
-
-    if DEVICE == "cuda":
-        image_pipe.to("cuda")
-
-    print("Stable Diffusion loaded successfully ✓")
-
-except Exception as e:
-    error_message = f"Failed to load model: {type(e).__name__}: {str(e)}"
-    print(f"❌ {error_message}")
-    image_pipe = None
-
-def generate_image(prompt: str, negative_prompt: str = "") -> tuple:
+class StableDiffusionEngine:
     """
-    Returns: (PIL.Image or None, status_message: str)
+    Stable Diffusion XL Engine (HF Spaces safe version)
     """
-    if not prompt.strip():
-        return None, "Please enter a prompt"
 
-    if image_pipe is None:
-        return None, error_message or "Model failed to load earlier"
-
-    try:
-        # Good defaults for speed + decent quality
-        result = image_pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt or "blurry, low quality, distorted, deformed, ugly, bad anatomy",
-            num_inference_steps=28,          # 20–35 is the 2026 sweet spot
-            guidance_scale=7.0,              # 7–9 usually best
-            height=512,
-            width=512,
-            # You can expose these as parameters later if you want a more advanced UI
+    def __init__(
+        self,
+        model_id="stabilityai/stable-diffusion-xl-base-1.0",
+        hf_token: str | None = None,
+    ):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+        # ✅ Proper dtype assignment
+        if self.device == "cuda":
+            dtype = torch.float16
+        else:
+            dtype = torch.float32   # 🔥 REQUIRED FOR CPU
+    
+        self.pipe = StableDiffusionXLPipeline.from_pretrained(
+            model_id,
+            torch_dtype=dtype,      # ✅ NOW ACTUALLY USED
+            use_safetensors=True,
+            token=hf_token,
         )
+    
+        self.pipe.to(self.device)
 
-        return result.images[0], "Image generated successfully"
 
-    except torch.cuda.OutOfMemoryError:
-        msg = "GPU out of memory – try shorter prompt or fewer steps"
-        print(f"❌ {msg}")
-        return None, msg
+    def generate_image(
+        self,
+        prompt: str,
+        num_inference_steps: int = 30,
+        guidance_scale: float = 7.5,
+        width: int = 1024,
+        height: int = 1024,
+    ):
+        with torch.no_grad():
+            image = self.pipe(
+                prompt=prompt,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                width=width,
+                height=height,
+            ).images[0]
+        return image
+# =========================
+# EXPORTABLE IMAGE FUNCTION
+# =========================
+sd_engine = StableDiffusionEngine()
 
-    except Exception as e:
-        msg = f"Generation failed: {type(e).__name__}: {str(e)}"
-        print(f"❌ {msg}")
-        return None, msg
+def generate_image(prompt):
+    return sd_engine.generate_image(prompt)
+
 # =========================
 # CHATBOT (Gemini)
 # Output generation function
@@ -176,5 +162,5 @@ def generate_output(prompt, max_length, temperature, top_p, seed):
     response = model.generate_content(
         prompt,
         generation_config=generation_config
-    )
+    )    
     return response.text
