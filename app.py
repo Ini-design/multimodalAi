@@ -35,7 +35,7 @@ with gr.Blocks(title="🎧 Multimodal AI Assistant") as demo:
 
     with gr.Tab("🌍 Translation"):
         input_text = gr.Textbox(label="English Text")
-        lang = gr.Radio(["French", "German"], value="French", label="Translate To")
+        lang = gr.Radio(["French", "German", "Spanish"], value="French", label="Translate To")
         translate_btn = gr.Button("Translate")
         translated_text = gr.Textbox(label="Translated Text")
         translate_btn.click(translate, [input_text, lang], translated_text)
